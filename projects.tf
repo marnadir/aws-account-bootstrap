@@ -19,6 +19,22 @@ output "design_risk_ci_role_arn" {
   value = module.design_risk.role_arn
 }
 
+module "skill_bridge" {
+  source = "./modules/project-ci-role"
+
+  github_repo     = "${var.github_owner}/skill-bridge"
+  github_owner_id = var.github_owner_id
+  github_repo_id  = "1360426227"
+  resource_prefix = "skillbridge"
+  role_name       = "github-actions-ci-skill-bridge"
+
+  oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
+}
+
+output "skill_bridge_ci_role_arn" {
+  value = module.skill_bridge.role_arn
+}
+
 ##template per il prossimo progetto:
 ##module "nome_progetto" {
 ##  source            = "./modules/project-ci-role"
