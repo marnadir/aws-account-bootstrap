@@ -1,76 +1,85 @@
 # aws-account-bootstrap
 
-La "piattaforma dell'account" AWS (820329008292), gestita **interamente via
-pipeline**: le risorse che esistono una volta sola per account e le identità
-CI di ogni progetto, in un posto solo.
+The "account platform" for AWS account `820329008292`, managed **entirely
+through the pipeline**: the resources that exist once per account, and the
+CI identity of every project, in a single place.
 
-- `account.tf` — bucket S3 dello state Terraform + provider OIDC GitHub
-  (unico per account: è il motivo per cui questo repo esiste).
-- `modules/project-ci-role/` — il ruolo CI di un progetto: trust OIDC legata
-  al suo repo (nome **e** ID immutabili), PowerUser + IAM ristretto al
-  prefisso delle sue risorse.
-- `projects.tf` — un'istanza del modulo per progetto.
-- `self.tf` — il ruolo che la pipeline di *questo* repo assume
-  (`digitalrisk-bootstrap-ci`), coi permessi minimi del suo mestiere.
-- `.github/workflows/terraform.yml` — plan sulle PR, apply al merge.
-- `imports.tf` — una tantum: adotta le risorse già esistenti sull'account
-  senza ricrearle (eliminare dopo il primo apply riuscito).
+- `account.tf` — the S3 bucket for Terraform state and the GitHub OIDC
+  identity provider (one per account: the reason this repository exists).
+- `modules/project-ci-role/` — the CI role of a project: OIDC trust bound
+  to its repository (by name **and** immutable ID), PowerUser plus IAM
+  actions restricted to the project's resource prefix.
+- `projects.tf` — one module instance per project.
+- `self.tf` — the role this repository's own pipeline assumes
+  (`digitalrisk-bootstrap-ci`), with the minimum permissions for its job.
+- `variables.tf` — account-wide constants in one place (the `backend`
+  block is the only exception: Terraform does not allow variables there).
+- `.github/workflows/terraform.yml` — plan on pull requests, apply on
+  merge to main.
 
-State remoto: stesso bucket, key `account-bootstrap/terraform.tfstate`.
+Remote state: same bucket, key `account-bootstrap/terraform.tfstate`.
 
-## Bootstrap del bootstrap (una tantum, tutto via pipeline)
+## How it works
 
-La pipeline assume `digitalrisk-bootstrap-ci`… che alla prima esecuzione non
-esiste. Lo crea **la pipeline di design-risk** (l'unico ruolo già attivo
-sull'account; il prefisso `digitalrisk-` del nome è il vincolo del suo
-scoping IAM). Ordine:
+GitHub Actions authenticates to AWS via **OIDC — no static credentials
+anywhere**. Each workflow run presents a short-lived token signed by
+GitHub; AWS verifies the issuer and checks the token's `sub` claim against
+the role's trust policy, which is pinned to a specific repository — by
+name *and* by immutable numeric ID. The ID survives repository renames and
+prevents trust hijacking through the recreation of a deleted repository
+under the same name.
 
-1. **Seed** — in `design-risk`, mergiare la PR che aggiunge
-   `infra/terraform/envs/dev/bootstrap_ci_seed.tf` (definizione temporanea
-   del ruolo): la sua pipeline lo applica e il ruolo nasce.
-2. **Adozione** — mergiare la prima PR di *questo* repo: la pipeline parte,
-   assume il ruolo appena nato e l'apply **importa** tutto l'esistente
-   (bucket, provider OIDC, ruolo di design-risk, sé stesso): atteso
-   "9 to import, 0 to destroy". Da qui questo repo si autogoverna.
-3. **Pulizia** — eliminare `imports.tf` qui; in design-risk sostituire il
-   seed con un blocco `removed` (dimentica senza distruggere: il ruolo ora
-   appartiene a questo repo):
+Each project gets **its own role**: separate boundaries, surgical
+revocation, contained blast radius. Removing a project's `module` block
+disarms that repository entirely.
 
-   ```hcl
-   removed {
-     from = aws_iam_role.bootstrap_ci_seed
-     lifecycle { destroy = false }
-   }
-   removed {
-     from = aws_iam_role_policy.bootstrap_ci_seed
-     lifecycle { destroy = false }
-   }
-   ```
+## Adding a project
 
-## Aggiungere un progetto
+1. Get the repository's immutable ID:
+   `gh api repos/<owner>/<repo> --jq .id`
+2. Copy the template block in `projects.tf` and fill in: repo, repo ID,
+   `resource_prefix` (the AWS resource prefix of the project),
+   `role_name` (`github-actions-ci-<project>`).
+3. Open a PR → review the plan → merge → apply. The
+   `<project>_ci_role_arn` output goes into the new repository's
+   workflows (`AWS_ROLE_ARN` env).
+4. Terraform backend of the new project: same bucket, key
+   `<project>/envs/<environment>/terraform.tfstate`.
 
-1. `gh api repos/marnadir/<repo> --jq .id` per l'ID immutabile.
-2. Copiare il blocco template in `projects.tf`: repo, repo_id,
-   `resource_prefix` (prefisso delle risorse AWS del progetto),
-   `role_name` = `github-actions-ci-<progetto>`.
-3. PR → plan in review → merge → apply. L'output `<progetto>_ci_role_arn`
-   va nei workflow del repo nuovo (env `AWS_ROLE_ARN`).
-4. Backend del progetto nuovo: stesso bucket, key
-   `<progetto>/envs/<ambiente>/terraform.tfstate`.
+## Removing a project
 
-## Rimuovere un progetto
+Delete the `module` block from `projects.tf` → PR → merge: the role is
+destroyed and that repository can no longer assume anything. The bucket
+and the OIDC provider stay (other projects use them).
 
-Eliminare il blocco `module` da `projects.tf` → PR → merge: il ruolo sparisce
-e quel repo non può più assumere nulla. Bucket e provider OIDC restano.
+## How this repository bootstrapped itself
 
-## Convenzioni
+A pipeline that manages IAM needs a role to assume — which did not exist
+on its first run. The chicken-and-egg was resolved by delegation, with no
+local `terraform apply` at any point:
 
-- Un ruolo per progetto, mai condiviso: revoca chirurgica, blast radius
-  contenuto.
-- Il claim `sub` include gli ID immutabili: la trust sopravvive al rename
-  del repo (aggiornare comunque `github_repo` col nome nuovo) e non è
-  dirottabile ricreando un repo omonimo.
-- `design-risk` conserva il nome storico `github-actions-ci` e la key
-  storica `envs/dev/terraform.tfstate`.
-- Dopo l'adozione, la cartella `bootstrap/` dentro design-risk è cimelio:
-  va ritirata (mai con `terraform destroy`).
+1. **Seed** — the already-active pipeline of the first project
+   (`design-risk`) created `digitalrisk-bootstrap-ci` through a regular,
+   temporary PR (the `digitalrisk-` prefix is the constraint of that
+   pipeline's IAM scoping).
+2. **Adoption** — the first apply of *this* repository assumed the
+   newly-born role and **imported** every pre-existing resource (state
+   bucket, OIDC provider, the first project's CI role, and the seed role
+   itself): 9 imports, 0 destroyed, zero downtime for the existing CI.
+3. **Cleanup** — the seed definition in design-risk was replaced with
+   `removed` blocks (`destroy = false`): its state forgot the role
+   without touching it. Ownership moved here; this repository has
+   self-governed ever since.
+
+## Conventions
+
+- One role per project, never shared.
+- The `sub` claim includes immutable IDs: trust survives repository
+  renames (update `github_repo` with the new name anyway) and cannot be
+  hijacked by recreating a deleted repository with the same name.
+- Repository renames of *this* repo are done in two steps to avoid
+  locking the pipeline out of its own role: first a PR that adds the new
+  name to `self_repo_names` (trust accepts both), then the rename, then a
+  PR that drops the old name.
+- `design-risk` keeps its historical role name (`github-actions-ci`) and
+  state key (`envs/dev/terraform.tfstate`).
