@@ -22,10 +22,14 @@ data "aws_iam_policy_document" "bootstrap_trust" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values = [
-        "repo:marnadir/account-bootstrap:*",
-        "repo:marnadir@44031384/account-bootstrap@1360274383:*",
-      ]
+      ##entrambi i formati del sub per ogni nome accettato (la lista
+      ##gestisce i rename del repo senza lockout della pipeline)
+      values = flatten([
+        for name in var.self_repo_names : [
+          "repo:${var.github_owner}/${name}:*",
+          "repo:${var.github_owner}@${var.github_owner_id}/${name}@${var.self_repo_id}:*",
+        ]
+      ])
     }
   }
 }
@@ -81,7 +85,7 @@ data "aws_iam_policy_document" "bootstrap_permissions" {
       "iam:TagOpenIDConnectProvider",
       "iam:UntagOpenIDConnectProvider",
     ]
-    resources = ["arn:aws:iam::820329008292:oidc-provider/token.actions.githubusercontent.com"]
+    resources = [aws_iam_openid_connect_provider.github.arn]
   }
 }
 
