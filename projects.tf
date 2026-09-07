@@ -5,8 +5,8 @@
 module "design_risk" {
   source = "./modules/project-ci-role"
 
-  github_repo     = "marnadir/design-risk"
-  github_owner_id = "44031384"
+  github_repo     = "${var.github_owner}/design-risk"
+  github_owner_id = var.github_owner_id
   github_repo_id  = "1303979814"
   resource_prefix = "digitalrisk"
   ##nome storico (pre-modulo): i workflow del repo lo referenziano gia'

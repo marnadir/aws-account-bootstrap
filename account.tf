@@ -6,7 +6,7 @@
 ##Convenzione delle key: <progetto>/envs/<ambiente>/terraform.tfstate
 ##(design-risk usa ancora la key storica envs/dev/terraform.tfstate)
 resource "aws_s3_bucket" "tfstate" {
-  bucket = "tfstate-820329008292-side-project"
+  bucket = var.tfstate_bucket_name
 }
 
 resource "aws_s3_bucket_versioning" "tfstate" {
