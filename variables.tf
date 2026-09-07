@@ -38,7 +38,7 @@ variable "github_owner_id" {
 variable "self_repo_names" {
   description = "Nomi accettati per il repo del bootstrap (lista per la transizione dei rename)"
   type        = list(string)
-  default     = ["account-bootstrap", "aws-account-bootstrap"]
+  default     = ["aws-account-bootstrap"]
 }
 
 variable "self_repo_id" {
