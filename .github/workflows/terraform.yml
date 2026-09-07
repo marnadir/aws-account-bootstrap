@@ -1,0 +1,68 @@
+name: Terraform
+
+##pipeline dell'account-bootstrap: plan sulle PR, apply al merge su main.
+##Stesso schema di design-risk; il ruolo assunto e' digitalrisk-bootstrap-ci
+##(vedi self.tf per la storia del nome e il seed)
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+##id-token serve per l'autenticazione OIDC verso AWS (niente chiavi statiche)
+permissions:
+  id-token: write
+  contents: read
+
+##un solo run alla volta: mai plan/apply concorrenti sullo state
+concurrency:
+  group: terraform-account-bootstrap
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-central-1
+  AWS_ROLE_ARN: arn:aws:iam::820329008292:role/digitalrisk-bootstrap-ci
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -input=false -no-color
+
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve
