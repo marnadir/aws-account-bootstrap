@@ -1,4 +1,4 @@
-# account-bootstrap
+# aws-account-bootstrap
 
 La "piattaforma dell'account" AWS (820329008292), gestita **interamente via
 pipeline**: le risorse che esistono una volta sola per account e le identità
